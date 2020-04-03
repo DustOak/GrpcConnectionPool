@@ -9,6 +9,7 @@ var poolOnce sync.Once
 
 //连接池管理
 type ConnectionPool struct {
+	lock sync.Mutex
 	//key为服务名
 	pool map[string]map[string]chan *grpcConnection
 	//健康服务列表及其ip:port
@@ -46,6 +47,8 @@ func (this *ConnectionPool) PutConnection(conn *grpcConnection) {
 }
 
 func (this *ConnectionPool) notice(service string, serviceAddressList []string) {
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	if value, ok := this.pool[service]; ok {
 		for i := 0; i < len(serviceAddressList); i++ {
 			if _, ok := value[serviceAddressList[i]]; !ok {
