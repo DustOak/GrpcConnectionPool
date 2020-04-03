@@ -55,9 +55,16 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 	this.lock.Lock()
 	defer this.lock.Unlock()
 	if value, ok := this.pool[service]; ok {
+		temp := make(map[string]struct{})
 		for i := 0; i < len(serviceAddressList); i++ {
+			temp[serviceAddressList[i]] = struct{}{}
 			if _, ok := value[serviceAddressList[i]]; !ok {
 				value[serviceAddressList[i]] = this.createNewConnChan(serviceAddressList[i], service)
+			}
+		}
+		for k, _ := range this.pool[service] {
+			if _, have := temp[k]; !have {
+				this.closeConnChan(service, k)
 			}
 		}
 	} else {
@@ -67,4 +74,11 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 		}
 	}
 	this.serviceMap[service] = serviceAddressList
+}
+
+func (this *ConnectionPool) closeConnChan(service, address string) {
+	for value := range this.pool[service][address] {
+		value.close()
+	}
+	delete(this.pool[service], address)
 }
