@@ -77,6 +77,8 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 }
 
 func (this *ConnectionPool) closeConnChan(service, address string) {
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	for value := range this.pool[service][address] {
 		value.close()
 	}

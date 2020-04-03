@@ -24,6 +24,7 @@ type Watch interface {
 var once sync.Once
 
 type ServiceList struct {
+	lock          sync.Mutex
 	subscriptList []Subscriber
 	serviceList   []string
 	config        *api.Config
@@ -62,20 +63,23 @@ func (this *ServiceList) newPublish() {
 
 //新增订阅
 func (this *ServiceList) Subscript(subscriber Subscriber) {
+	this.lock.Lock()
 	this.subscriptList = append(this.subscriptList, subscriber)
+	this.lock.Unlock()
 }
 
 //发布新健康列表
 func (this *ServiceList) publish(service string, serviceList []string) {
-	var lock sync.Mutex
-	lock.Lock()
-	defer lock.Unlock()
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	for i := 0; i < len(this.subscriptList); i++ {
 		this.subscriptList[i].notice(service, serviceList)
 	}
 }
 
 func (this *ServiceList) watching() {
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	for i := 0; i < len(this.serviceList); i++ {
 		go this.watchService(this.serviceList[i])
 	}
