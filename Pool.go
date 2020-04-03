@@ -36,13 +36,18 @@ func (this *ConnectionPool) createNewConnChan(address, service string) chan *grp
 	return c
 }
 
+//随机负载均衡
 func (this *ConnectionPool) PopConnection(service string) *grpcConnection {
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	r := rand.Int31n(int32(len(this.serviceMap[service])))
 	c := <-this.pool[service][this.serviceMap[service][r]]
 	return c
 }
 
 func (this *ConnectionPool) PutConnection(conn *grpcConnection) {
+	this.lock.Lock()
+	defer this.lock.Unlock()
 	this.pool[conn.service][conn.address] <- conn
 }
 
