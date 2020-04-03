@@ -1,4 +1,23 @@
 改程序是一个根据我毕设写的一个基于consul服务发现程序的GRPC连接池
 
+因为初次开发这种东西,所以可能还不太完善 希望各位大佬见谅 感谢您的使用
+
 如何下载:go get -u github.com/ChangFengcwb/GrpcConnectionPool 
 
+
+使用方式 
+	//初始化一个连接池
+	utils.Pool = GrpcConnectionPool.InitConnectionPool()
+	//初始化consul服务列表的发布订阅功能,并传入所需订阅服务
+	utils.ServiceList = GrpcConnectionPool.InitPublishServiceList([]string{
+		"go.service.Exam", "go.service.Marking", "go.service.Room", "go.service.StudentAndTeacher", "go.service.TestPaper", "go.service.Topic", "go.service.Utils",
+	})
+	//将连接池传入订阅服务中 订阅服务列表更新
+	utils.ServiceList.Subscript(utils.Pool)
+
+	//获取某个服务的连接
+	examConn := utils.Pool.PopConnection("go.service.Exam")
+	//收回连接
+	defer utils.Pool.PutConnection(examConn)
+	//传入连接 
+	exam := Exam.NewExamClient(examConn.GetClientConn())
