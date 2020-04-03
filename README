@@ -1,1 +1,4 @@
 改程序是一个根据我毕设写的一个基于consul服务发现程序的GRPC连接池
+
+如何下载:go get -u github.com/ChangFengcwb/GrpcConnectionPool 
+
