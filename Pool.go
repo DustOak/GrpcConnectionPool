@@ -58,7 +58,7 @@ func (this *ConnectionPool) PopConnection(service string) *grpcConnection {
 	//}
 	r := rand.Int31n(addressMap.(*addressList).len)
 	services, _ := this.pool.Load(service)
-	c, _ := services.(sync.Map).Load(addressMap.(*addressList).addressList[r])
+	c, _ := (services.(*sync.Map)).Load(addressMap.(*addressList).addressList[r])
 	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n:", service, c.(*grpcConnection).address)
 	return c.(*grpcConnection)
 }
@@ -67,7 +67,7 @@ func (this *ConnectionPool) PutConnection(conn *grpcConnection) {
 	//this.lock.Lock()
 	//defer this.lock.Unlock()
 	addressList, _ := this.pool.Load(conn.service)
-	c, _ := addressList.(sync.Map).Load(conn.address)
+	c, _ := addressList.(*sync.Map).Load(conn.address)
 	c.(chan *grpcConnection) <- conn
 	log.Printf("归还连接,服务名:%s ,远程地址:%s\n:", conn.service, conn.address)
 
@@ -78,12 +78,12 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 		temp := make(map[string]struct{})
 		for i := 0; i < len(serviceAddressList); i++ {
 			temp[serviceAddressList[i]] = struct{}{}
-			if _, ok := value.(sync.Map).Load(serviceAddressList[i]); !ok {
+			if _, ok := value.(*sync.Map).Load(serviceAddressList[i]); !ok {
 				conn := this.createNewConnChan(serviceAddressList[i], service)
-				value.(sync.Map).Store(serviceAddressList[i], conn)
+				value.(*sync.Map).Store(serviceAddressList[i], conn)
 			}
 		}
-		value.(sync.Map).Range(func(key, value interface{}) bool {
+		value.(*sync.Map).Range(func(key, value interface{}) bool {
 			_, ok := temp[key.(string)]
 			if !ok {
 				this.closeConnChan(service, key.(string))
@@ -91,7 +91,7 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 			return true
 		})
 	} else {
-		var addressListMap sync.Map
+		var addressListMap *sync.Map
 		for i := 0; i < len(serviceAddressList); i++ {
 			conn := this.createNewConnChan(serviceAddressList[i], service)
 			addressListMap.Store(serviceAddressList[i], conn)
@@ -146,9 +146,9 @@ func (this *ConnectionPool) notice(service string, serviceAddressList []string) 
 func (this *ConnectionPool) closeConnChan(service, address string) {
 	log.Println("有要关机的微服务,关闭已注册连接")
 	value, _ := this.pool.Load(service)
-	c, _ := value.(sync.Map).Load(address)
+	c, _ := value.(*sync.Map).Load(address)
 	for v := range c.(chan *grpcConnection) {
 		v.close()
 	}
-	value.(sync.Map).Delete(address)
+	value.(*sync.Map).Delete(address)
 }
