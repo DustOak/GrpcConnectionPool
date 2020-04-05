@@ -2,7 +2,7 @@
 
 因为初次开发这种东西,所以可能还不太完善 希望各位大佬见谅 感谢您的使用
 
-如何下载:go get -u github.com/ChangFengcwb/GrpcConnectionPool 
+如何下载:go get -u GrpcConnectionPool
 
 
 使用方式 

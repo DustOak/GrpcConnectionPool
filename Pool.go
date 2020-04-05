@@ -10,145 +10,105 @@ var poolOnce sync.Once
 
 //连接池管理
 type ConnectionPool struct {
-	////读写锁,解决并发问题 暂不使用
-	//lock sync.RWMutex
+	//读写锁,解决并发问题 暂不使用
+	lock sync.RWMutex
 
+	//串行化通道  存储有更新的健康服务列表
+	queue chan *healthServiceList
 	//key为服务名
-	//pool map[string]map[string]chan *grpcConnection
-	pool sync.Map
+	pool map[string]map[string]chan *grpcConnection
 
 	//健康服务列表及其ip:port
-	//serviceMap map[string][]string
-	serviceMap sync.Map
+	serviceMap map[string][]string
 }
 
-type addressList struct {
+type healthServiceList struct {
+	service     string
 	addressList []string
-	len         int32
 }
 
-//func (this *ConnectionPool) newConnectionPool() {
-//	//this.pool = make(map[string]map[string]chan *grpcConnection)
-//	//this.serviceMap = make(map[string][]string)
-//	trh
-//}
+func (this *ConnectionPool) newConnectionPool() {
+	this.pool = make(map[string]map[string]chan *grpcConnection)
+	this.serviceMap = make(map[string][]string)
+	this.queue = make(chan *healthServiceList, SerializeQueueLength)
+}
 
 //初始化连接池和健康服务列表监控
 func InitConnectionPool() *ConnectionPool {
 	pool := &ConnectionPool{}
-	//poolOnce.Do(pool.newConnectionPool)
+	poolOnce.Do(pool.newConnectionPool)
+	go func() {
+		pool.watch()
+	}()
 	return pool
 }
 
-func (this *ConnectionPool) createNewConnChan(address, service string) chan *grpcConnection {
+func (this *ConnectionPool) createNewConnChan(address, service string) {
+	log.Printf("发现新上线的微服务,服务名:%s,远程地址:%s,开始注册连接\n", service, address)
 	c := make(chan *grpcConnection, ActiveConn)
 	for i := 1; i <= ActiveConn; i++ {
 		c <- NewGrpcConnection(address, service)
 	}
-	return c
+	this.pool[service][address] = c
 }
 
 //随机负载均衡
 func (this *ConnectionPool) PopConnection(service string) *grpcConnection {
-	//this.lock.RLock()
-	//defer this.lock.RUnlock()
-	addressMap, _ := this.serviceMap.Load(service)
-	//if !ok {
-	//	return nil, NoHaveService
-	//}
-	r := rand.Int31n(addressMap.(*addressList).len)
-	services, _ := this.pool.Load(service)
-	c, _ := (services.(*sync.Map)).Load(addressMap.(*addressList).addressList[r])
-	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n:", service, c.(*grpcConnection).address)
-	return c.(*grpcConnection)
+	this.lock.RLock()
+	defer this.lock.RUnlock()
+	r := rand.Intn(len(this.serviceMap[service]))
+	cc := <-this.pool[service][this.serviceMap[service][r]]
+	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n:", service, cc.address)
+	return cc
 }
 
 func (this *ConnectionPool) PutConnection(conn *grpcConnection) {
-	//this.lock.Lock()
-	//defer this.lock.Unlock()
-	addressList, _ := this.pool.Load(conn.service)
-	c, _ := addressList.(*sync.Map).Load(conn.address)
-	c.(chan *grpcConnection) <- conn
+	this.lock.Lock()
+	defer this.lock.Unlock()
+	this.pool[conn.service][conn.address] <- conn
 	log.Printf("归还连接,服务名:%s ,远程地址:%s\n:", conn.service, conn.address)
-
 }
 
-func (this *ConnectionPool) notice(service string, serviceAddressList []string) {
-	if value, ok := this.pool.Load(service); ok {
+func (this *ConnectionPool) serviceListUpdate(list *healthServiceList) {
+	this.lock.Lock()
+	defer this.lock.Unlock()
+	if value, ok := this.pool[list.service]; ok {
 		temp := make(map[string]struct{})
-		for i := 0; i < len(serviceAddressList); i++ {
-			temp[serviceAddressList[i]] = struct{}{}
-			if _, ok := value.(*sync.Map).Load(serviceAddressList[i]); !ok {
-				conn := this.createNewConnChan(serviceAddressList[i], service)
-				value.(*sync.Map).Store(serviceAddressList[i], conn)
+		for i := 0; i < len(list.addressList); i++ {
+			temp[list.addressList[i]] = struct{}{}
+			if _, have := value[list.addressList[i]]; !have {
+				this.createNewConnChan(list.addressList[i], list.service)
 			}
 		}
-		value.(*sync.Map).Range(func(key, value interface{}) bool {
-			_, ok := temp[key.(string)]
-			if !ok {
-				this.closeConnChan(service, key.(string))
+		for k, _ := range value {
+			if _, have := temp[k]; !have {
+				this.closeConnChan(list.service, k)
 			}
-			return true
-		})
+		}
 	} else {
-		var addressListMap *sync.Map
-		for i := 0; i < len(serviceAddressList); i++ {
-			conn := this.createNewConnChan(serviceAddressList[i], service)
-			addressListMap.Store(serviceAddressList[i], conn)
+		this.pool[list.service] = make(map[string]chan *grpcConnection)
+		for i := 0; i < len(list.addressList); i++ {
+			this.createNewConnChan(list.addressList[i], list.service)
 		}
-		this.pool.Store(service, addressListMap)
 	}
-	this.serviceMap.Store(service, &addressList{
-		addressList: serviceAddressList,
-		len:         int32(len(serviceAddressList)),
-	})
+	this.serviceMap[list.service] = list.addressList
+}
 
-	//this.lock.RLock()
-	//if value, ok := this.pool[service]; ok {
-	//	this.lock.RUnlock()
-	//	temp := make(map[string]struct{})
-	//	for i := 0; i < len(serviceAddressList); i++ {
-	//		temp[serviceAddressList[i]] = struct{}{}
-	//		this.lock.RLock()
-	//		if _, ok := value[serviceAddressList[i]]; !ok {
-	//			this.lock.RUnlock()
-	//			conn := this.createNewConnChan(serviceAddressList[i], service)
-	//			this.lock.Lock()
-	//			value[serviceAddressList[i]] = conn
-	//			this.lock.Unlock()
-	//		}
-	//	}
-	//	//清理已经宕机的微服务的连接
-	//	this.lock.RLock()
-	//	for k, _ := range this.pool[service] {
-	//		if _, have := temp[k]; !have {
-	//			this.closeConnChan(service, k)
-	//		}
-	//	}
-	//	this.lock.RUnlock()
-	//} else {
-	//	this.lock.RUnlock()
-	//	this.lock.Lock()
-	//	this.pool[service] = make(map[string]chan *grpcConnection)
-	//	this.lock.Unlock()
-	//	for i := 0; i < len(serviceAddressList); i++ {
-	//		conn := this.createNewConnChan(serviceAddressList[i], service)
-	//		this.lock.Lock()
-	//		this.pool[service][serviceAddressList[i]] = conn
-	//		this.lock.Unlock()
-	//	}
-	//}
-	//this.lock.Lock()
-	//this.serviceMap[service] = serviceAddressList
-	//this.lock.Unlock()
+func (this *ConnectionPool) notice(list *healthServiceList) {
+	this.queue <- list
+}
+
+func (this *ConnectionPool) watch() {
+	for {
+		health := <-this.queue
+		this.serviceListUpdate(health)
+	}
 }
 
 func (this *ConnectionPool) closeConnChan(service, address string) {
-	log.Println("有要关机的微服务,关闭已注册连接")
-	value, _ := this.pool.Load(service)
-	c, _ := value.(*sync.Map).Load(address)
-	for v := range c.(chan *grpcConnection) {
+	log.Printf("发现关机的微服务,服务名:%s,远程地址:%s,关闭已注册连接\n", service, address)
+	for v := range this.pool[service][address] {
 		v.close()
 	}
-	value.(*sync.Map).Delete(address)
+	delete(this.pool[service], address)
 }

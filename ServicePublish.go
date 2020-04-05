@@ -8,7 +8,7 @@ import (
 )
 
 type Subscriber interface {
-	notice(string, []string)
+	notice(list *healthServiceList)
 }
 
 type Publisher interface {
@@ -73,7 +73,7 @@ func (this *ServiceList) publish(service string, serviceList []string) {
 	this.lock.RLock()
 	defer this.lock.RUnlock()
 	for i := 0; i < len(this.subscriptList); i++ {
-		this.subscriptList[i].notice(service, serviceList)
+		this.subscriptList[i].notice(&healthServiceList{service: service, addressList: serviceList})
 	}
 }
 
