@@ -49,7 +49,9 @@ func (this *ConnectionPool) createNewConnChan(address, service string) {
 	for i := 1; i <= ActiveConn; i++ {
 		c <- NewGrpcConnection(address, service)
 	}
+	this.lock.Lock()
 	this.pool[service][address] = c
+	this.lock.Unlock()
 }
 
 //随机负载均衡
@@ -58,7 +60,7 @@ func (this *ConnectionPool) PopConnection(service string) *grpcConnection {
 	defer this.lock.RUnlock()
 	r := rand.Intn(len(this.serviceMap[service]))
 	cc := <-this.pool[service][this.serviceMap[service][r]]
-	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n:", service, cc.address)
+	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n", service, cc.address)
 	return cc
 }
 
@@ -66,19 +68,23 @@ func (this *ConnectionPool) PutConnection(conn *grpcConnection) {
 	this.lock.Lock()
 	defer this.lock.Unlock()
 	this.pool[conn.service][conn.address] <- conn
-	log.Printf("归还连接,服务名:%s ,远程地址:%s\n:", conn.service, conn.address)
+	log.Printf("归还连接,服务名:%s ,远程地址:%s\n", conn.service, conn.address)
 }
 
 func (this *ConnectionPool) serviceListUpdate(list *healthServiceList) {
-	this.lock.Lock()
-	defer this.lock.Unlock()
+	this.lock.RLock()
 	if value, ok := this.pool[list.service]; ok {
+		this.lock.RUnlock()
 		temp := make(map[string]struct{})
 		for i := 0; i < len(list.addressList); i++ {
 			temp[list.addressList[i]] = struct{}{}
+			this.lock.RLock()
 			if _, have := value[list.addressList[i]]; !have {
+				this.lock.RUnlock()
 				this.createNewConnChan(list.addressList[i], list.service)
+				continue
 			}
+			this.lock.RUnlock()
 		}
 		for k, _ := range value {
 			if _, have := temp[k]; !have {
@@ -86,12 +92,17 @@ func (this *ConnectionPool) serviceListUpdate(list *healthServiceList) {
 			}
 		}
 	} else {
+		this.lock.RUnlock()
+		this.lock.Lock()
 		this.pool[list.service] = make(map[string]chan *grpcConnection)
+		this.lock.Unlock()
 		for i := 0; i < len(list.addressList); i++ {
 			this.createNewConnChan(list.addressList[i], list.service)
 		}
 	}
+	this.lock.Lock()
 	this.serviceMap[list.service] = list.addressList
+	this.lock.Unlock()
 }
 
 func (this *ConnectionPool) notice(list *healthServiceList) {
@@ -107,8 +118,12 @@ func (this *ConnectionPool) watch() {
 
 func (this *ConnectionPool) closeConnChan(service, address string) {
 	log.Printf("发现关机的微服务,服务名:%s,远程地址:%s,关闭已注册连接\n", service, address)
-	for v := range this.pool[service][address] {
+	this.lock.Lock()
+	defer this.lock.Unlock()
+	for i := 1; i <= len(this.pool[service][address]); i++ {
+		v := <-this.pool[service][address]
 		v.close()
 	}
+	close(this.pool[service][address])
 	delete(this.pool[service], address)
 }
