@@ -52,6 +52,7 @@ func (this *ConnectionPool) createNewConnChan(address, service string) {
 	this.lock.Lock()
 	this.pool[service][address] = c
 	this.lock.Unlock()
+	log.Printf("新服务连接注册完毕,服务名:%s,远程地址:%s\n", service, address)
 }
 
 //随机负载均衡
@@ -60,7 +61,7 @@ func (this *ConnectionPool) PopConnection(service string) *grpcConnection {
 	defer this.lock.RUnlock()
 	r := rand.Intn(len(this.serviceMap[service]))
 	cc := <-this.pool[service][this.serviceMap[service][r]]
-	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s\n", service, cc.address)
+	log.Printf("从连接池获取连接,服务名:%s ,远程地址:%s,剩余连接数%d\n", service, cc.address, len(this.pool[service][this.serviceMap[service][r]]))
 	return cc
 }
 
@@ -103,6 +104,7 @@ func (this *ConnectionPool) serviceListUpdate(list *healthServiceList) {
 	this.lock.Lock()
 	this.serviceMap[list.service] = list.addressList
 	this.lock.Unlock()
+
 }
 
 func (this *ConnectionPool) notice(list *healthServiceList) {
@@ -126,4 +128,5 @@ func (this *ConnectionPool) closeConnChan(service, address string) {
 	}
 	close(this.pool[service][address])
 	delete(this.pool[service], address)
+	log.Printf("连接注销完毕,服务名:%s,远程地址:%s\n", service, address)
 }
